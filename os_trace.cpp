@@ -9,6 +9,9 @@
  */
 
 #include "module.h"
+
+static std::map<Anope::string, int> numSess;
+
 #include "os_trace/trace.h"
 
 static std::vector<Trace> allTraces;
@@ -219,6 +222,7 @@ class CommandOSTrace : public Command
 				"  \002CERTFP \037ABCDEF...\037\002 - Match the user whose certificate fingerprint matches the one specified\n"
 				"  \002TAGGED \037tag\037\002 - Match users tagged with the specified tag\n"
 				"  \002ACCOUNT \037username\037\002 - Match users logged into the account specified\n"
+				"  \002SESSIONS [\037<\037|\037<=\037|\037=\037|\037=>\037|\037>\037] - Match users based on the number of sessions they have\n"
 				"  \002ON [\037CONNECT\037 | \037JOIN\037 | \037IDENTIFY\037 | \037NICK\037]\002 - Occur because of a specific event; only useful with \002ALERT\002\n"
 				"Actions:\n"
 				"  \002NOP\002 - Do nothing, successfully\n"
@@ -234,6 +238,7 @@ class CommandOSTrace : public Command
 				"  \002EXPIRY \0376y5m4w3d2h1m\037\002 - Specify expiry for AKILL actions\n"
 				"  \002TARGET \037#channel\037\002 - Target channel; used in some actions\n"
 				"  \002REASON \037text here\037\002 - Specify the reason text\n"
+				"  \002REGEX 1\002 - Enable regex matching for patterns\n"
 				"  \002DISASM 1\002 - Disassemble the TRACE's bytecode; only useful for debugging\n"));
 		return true;
 	}
@@ -250,12 +255,29 @@ class OSTrace : public Module
 	OSTrace(const Anope::string &modname, const Anope::string &creator) : Module(modname, creator, VENDOR),
 		commandostrace(this), commandosalert(this), trace_type("Traces", TraceData::Unserialize)
 	{
-
+		for (Anope::hash_map<User*>::const_iterator it = UserListByUID.begin(); it != UserListByUID.end(); ++it) {
+			bool b = false;
+			OnUserConnect(it->second, b);
+		}
 	}
 
 	void OnUserConnect(User *u, bool &exempt) anope_override
 	{
 		trace_saver.ApplyTo(u, "CONNECT");
+		int n = numSess.find(u->host.lower()) != numSess.end() ? numSess[u->host.lower()] : 0;
+		n++;
+		numSess[u->host.lower()] = n;
+	}
+
+	void OnUserQuit(User *u) anope_override
+	{
+		int n = numSess.find(u->host.lower()) != numSess.end() ? numSess[u->host.lower()] : 0;
+		if (n == 0) throw ModuleException("Assertion failed: numSess[...] != 0");
+		n--;
+		if (n == 0)
+			numSess.erase(numSess.find(u->host.lower()));
+		else
+			numSess[u->host.lower()]--;
 	}
 
 	void OnJoinChannel(User *u, Channel *c) anope_override

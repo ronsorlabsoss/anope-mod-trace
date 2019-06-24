@@ -10,6 +10,22 @@ static inline Anope::string DUP_STR(const Anope::string &s) {
 	return Anope::string(s.c_str());
 }
 
+static inline bool EvalExpr(const Anope::string &expr, int number) {
+	if (expr.empty())
+		return false;
+	if (expr.find("<") == 0)
+		return number < atoi(expr.c_str() + 1);
+	if (expr.find("<=") == 0)
+		return number <= atoi(expr.c_str() + 2);
+	if (expr.find(">") == 0)
+		return number > atoi(expr.c_str() + 1);
+	if (expr.find(">=") == 0)
+		return number >= atoi(expr.c_str() + 2);
+	if (expr.find("<>") == 0)
+		return number != atoi(expr.c_str() + 2);
+	return atoi(expr.c_str()) == number;
+}
+
 // FIXME doesn't work right with IRCds that don't use UIDs (ngircd, bahamut)
 static std::map<Anope::string, Anope::string> userTags;
 
@@ -72,7 +88,7 @@ public:
 
 	static Anope::string Canonicalize(Anope::string in, Anope::string type = "criteria" /* or action */) {
 		const char** canonical;
-		const char* canon_criteria[] = {"DISASM", "MASK", "REALNAME", "SERVER", "JOINED", "CERTFP", "TARGET", "EXPIRY", "REASON", "VALUE", "TAGGED", "ACCOUNT", "ON", NULL};
+		const char* canon_criteria[] = {"DISASM", "MASK", "REALNAME", "SERVER", "JOINED", "CERTFP", "TARGET", "EXPIRY", "REASON", "VALUE", "TAGGED", "ACCOUNT", "ON", "REGEX", "SESSIONS", NULL};
 		const char* canon_action[] = {"COUNT", "AKILL", "KILL", "ECHO", "NOP", "SAJOIN", "SAPART", "PRIVMSG", "TAG", NULL};
 		int matches = 0; Anope::string ret;
 		if (type == "action") { // Forbidden by ISO C++98, but I don't care
@@ -118,7 +134,7 @@ public:
 	}
 
 	double CalcEffects() { // Calculate the (rough) percentage of users a trace is likely to affect
-		return 0;
+		return 0; // TODO
 	}
 
 	bool ApplyTo(CommandSource *source, User* user, Anope::string event = "", bool force = false) {
@@ -142,13 +158,15 @@ public:
 			source->Reply(_("End of source"));
 			alreadyDumped = true;
 		}
+		if (HAS_CRITERIA("SESSIONS") && !force &&
+			!EvalExpr(criteria["SESSIONS"], numSess[user->host.lower()])) return false;
 		if (HAS_CRITERIA("ON") && !force && DUP_STR(event).upper() != criteria["ON"] && event != "") {
 			return false;
 		}
 		if (HAS_CRITERIA("MASK") && !force &&
-			!Anope::Match(user->GetMask(), criteria["MASK"])) return false;
+			!Anope::Match(user->GetMask(), criteria["MASK"], false, HAS_CRITERIA("REGEX"))) return false;
 		if (HAS_CRITERIA("REALNAME") && !force &&
-			!Anope::Match(user->realname, criteria["REALNAME"])) return false;
+			!Anope::Match(user->realname, criteria["REALNAME"], false, HAS_CRITERIA("REGEX"))) return false;
 		if (HAS_CRITERIA("CERTFP") && !force &&
 			DUP_STR(criteria["CERTFP"]).upper() != DUP_STR(user->fingerprint).upper())
 				return false;
@@ -158,9 +176,9 @@ public:
 			if (!chan->FindUser(user)) return false;
 		}
 		if (HAS_CRITERIA("SERVER") && !force &&
-			!Anope::Match(user->server->GetName(), criteria["SERVER"])) return false;
+			!Anope::Match(user->server->GetName(), criteria["SERVER"]), false, HAS_CRITERIA("REGEX")) return false;
 		if (HAS_CRITERIA("ACCOUNT") && !force &&
-			user->Account() && !Anope::Match(user->Account()->display, criteria["ACCOUNT"])) return false;
+			user->Account() && !Anope::Match(user->Account()->display, criteria["ACCOUNT"], false, HAS_CRITERIA("REGEX"))) return false;
 		if (HAS_CRITERIA("TAGGED") && !force &&
 			(userTags.find(user->GetUID()) == userTags.end() || userTags[user->GetUID()] != criteria["TAGGED"])) return false;
 
@@ -177,7 +195,7 @@ public:
 				return false;
 			}
 			expires += Anope::CurTime;
-			XLine *x = new XLine("*@", source ? source->GetNick() : "OS_TRACE", expires, criteria["REASON"], XLineManager::GenerateUID());
+			XLine *x = new XLine("*@" + user->host, source ? source->GetNick() : "OS_TRACE", expires, criteria["REASON"], XLineManager::GenerateUID());
 			akills->AddXLine(x);
 			akills->OnMatch(user, x);
 		} else if (action == "SAJOIN" && HAS_CRITERIA("TARGET"))
