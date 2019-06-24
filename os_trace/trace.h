@@ -31,13 +31,15 @@ public:
 		Unserialize(expr);
 	}
 
-	void Unserialize(const std::vector<Anope::string> &expr) {
-		criteria["REASON"] = "No reason specified";
-		if (expr.size() < 3)
+	void Unserialize(const std::vector<Anope::string> &expr, bool append = false) {
+		if (!HAS_CRITERIA("REASON")) criteria["REASON"] = "No reason specified";
+		if (expr.size() < (append ? 2 : 3))
 			throw ModuleException("TRACE database is corrupt: wrong number of elements in expression (1 or 2), expected at least 3");
-		action = Trace::Canonicalize(expr[0].upper(), "action");
-		if (action.empty()) throw ModuleException("Unknown criteria: " + expr[0]);
-		size_t i; for (i = 1; i < expr.size() && (i + 1) < expr.size(); i += 2) {
+		if (!append) {
+			action = Trace::Canonicalize(expr[0].upper(), "action");
+			if (action.empty()) throw ModuleException("Unknown action: " + expr[0]);
+		}
+		size_t i; for (i = (append ? 0 : 1); i < expr.size() && (i + 1) < expr.size(); i += 2) {
 			Anope::string k(expr[i]);
 			k = Trace::Canonicalize(k.upper(), "criteria");
 			if (k.empty()) throw ModuleException("Unknown criteria: " + expr[i]);
@@ -70,7 +72,7 @@ public:
 
 	static Anope::string Canonicalize(Anope::string in, Anope::string type = "criteria" /* or action */) {
 		const char** canonical;
-		const char* canon_criteria[] = {"DISASM", "MASK", "REALNAME", "SERVER", "JOINED", "CERTFP", "TARGET", "EXPIRY", "REASON", "VALUE", "TAGGED", "ACCOUNT", NULL};
+		const char* canon_criteria[] = {"DISASM", "MASK", "REALNAME", "SERVER", "JOINED", "CERTFP", "TARGET", "EXPIRY", "REASON", "VALUE", "TAGGED", "ACCOUNT", "ON", NULL};
 		const char* canon_action[] = {"COUNT", "AKILL", "KILL", "ECHO", "NOP", "SAJOIN", "SAPART", "PRIVMSG", "TAG", NULL};
 		int matches = 0; Anope::string ret;
 		if (type == "action") { // Forbidden by ISO C++98, but I don't care
@@ -90,6 +92,22 @@ public:
 			return "";
 	}
 
+	void Validate() { // Throws a ModuleException if something's wrong with the trace
+		if (Canonicalize(action, "action").empty())
+			throw ModuleException("Invalid action specified: " + action);
+		for (std::map<Anope::string, Anope::string>::const_iterator it = criteria.begin(); it != criteria.end(); ++it) {
+			if (Canonicalize(it->first, "criteria").empty())
+				throw ModuleException("Invalid criteria specified: " + it->first);
+			if (it->first == "DISASM" && it->second != "1")
+				throw ModuleException("DISASM option only supports '1' as a parameter (enabled)");
+			if (it->first == "MASK" && !Anope::Match(it->second, "*!*@*"))
+				throw ModuleException("Bad hostmask specified for MASK: " + it->second);
+			if ((it->first == "TARGET" || it->first == "JOINED") && it->second.c_str()[0] != '#')
+				throw ModuleException("Bad " + it->first + " channel: " + it->second);
+		}
+		// If we got here, all is ok!
+	}
+
 	int Exec(CommandSource *source = NULL) { // Execute trace
 		int total = 0;
 		for (Anope::hash_map<User*>::const_iterator it = UserListByUID.begin(); it != UserListByUID.end(); ++it) {
@@ -103,7 +121,7 @@ public:
 		return 0;
 	}
 
-	bool ApplyTo(CommandSource *source, User* user, bool force = false) {
+	bool ApplyTo(CommandSource *source, User* user, Anope::string event = "", bool force = false) {
 		if (user->server == Me) return false;
 		MessageSource* actionSource = source ? (MessageSource*)*source->service : (MessageSource*)Config->GetClient("OperServ");
 		if (!actionSource)
@@ -124,6 +142,9 @@ public:
 			source->Reply(_("End of source"));
 			alreadyDumped = true;
 		}
+		if (HAS_CRITERIA("ON") && !force && DUP_STR(event).upper() != criteria["ON"] && event != "") {
+			return false;
+		}
 		if (HAS_CRITERIA("MASK") && !force &&
 			!Anope::Match(user->GetMask(), criteria["MASK"])) return false;
 		if (HAS_CRITERIA("REALNAME") && !force &&
@@ -143,7 +164,7 @@ public:
 		if (HAS_CRITERIA("TAGGED") && !force &&
 			(userTags.find(user->GetUID()) == userTags.end() || userTags[user->GetUID()] != criteria["TAGGED"])) return false;
 
-		Log() << "os_trace: performing action " << action << " on user " << user->GetMask() << ".";
+		if (source || HAS_CRITERIA("DISASM")) Log() << "os_trace: performing action " << action << " on user " << user->GetMask() << ".";
 		if (action == "KILL" && !user->IsProtected())
 			user->Kill(Me, criteria["REASON"]);
 		else if (action == "AKILL" && !user->IsProtected()) {
