@@ -23,6 +23,8 @@ static inline bool EvalExpr(const Anope::string &expr, int number) {
 		return number >= atoi(expr.c_str() + 2);
 	if (expr.find("<>") == 0)
 		return number != atoi(expr.c_str() + 2);
+	if (expr.find("=") == 0)
+		return number == atoi(expr.c_str() + 1);
 	return atoi(expr.c_str()) == number;
 }
 
