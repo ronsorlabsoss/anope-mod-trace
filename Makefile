@@ -2,7 +2,7 @@ ifeq ($(ANOPE),)
   $(error Usage: make ANOPE=/path/to/anope/tree)
 endif
 
-import:
+import: $(ANOPE)/modules/os_trace.cpp $(ANOPE)/modules/os_trace
 
 $(ANOPE)/modules/os_trace.cpp:
 	ln -s $(abspath os_trace.cpp) $@
